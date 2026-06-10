@@ -33,6 +33,9 @@ physical Insteon changes back to Zigbee light reports.
   them under one device.
 - MAC-level association from virtual child IEEE identities can create separate
   Hue-visible light resources from one physical dongle.
+- Diagnostic firmware tracks live child short addresses, serves virtual-child
+  descriptors, demultiplexes Hue commands by identity, and emits identity-aware
+  serial JSON.
 - The build helper supports `--virtual-child-count 0..15`.
 
 For three total lights, build with `--virtual-child-count 2`.
@@ -40,10 +43,10 @@ For three total lights, build with `--virtual-child-count 2`.
 ## Active Work
 
 1. Production firmware state:
-   - persist per-identity short address, trust-center state, frame counters,
-     and ZCL attributes.
-   - route incoming APS/ZCL commands per identity without diagnostic global
-     swaps.
+   - persist and restore per-identity short address, trust-center/security
+     state, frame counters, and ZCL attributes across reboot/rejoin.
+   - remove remaining diagnostic global-state swaps from identity-sensitive
+     send paths.
    - apply Pi-originated reports to the correct Hue-visible identity.
 
 2. Serial bridge contract:

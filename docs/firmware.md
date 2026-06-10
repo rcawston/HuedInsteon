@@ -18,7 +18,9 @@ The current one-dongle direction is parent plus virtual children:
   the Pi: parent = `1`, first child = `2`, second child = `3`.
 
 The diagnostic firmware has proven admission and discovery. Production firmware
-still needs persistent per-identity network/security/ZCL state.
+also tracks live child short addresses, serves virtual-child descriptors, and
+emits identity-aware Hue command JSON to the Pi. The remaining firmware work is
+durability and reverse-direction reporting, not basic multi-identity discovery.
 
 ## Build
 
@@ -101,11 +103,12 @@ Pi to firmware:
 
 ## Remaining Firmware Work
 
-- Persist per-identity short address, trust-center state, frame counters, and
-  ZCL attributes.
-- Route incoming APS/ZCL commands for each virtual identity without relying on
-  diagnostic global-state swaps.
-- Apply Pi-originated reports to the correct Hue-visible identity.
+- Persist and restore per-identity short address, trust-center/security state,
+  frame counters, and ZCL attributes across reboot/rejoin.
+- Remove remaining diagnostic global-state swaps from identity-sensitive send
+  paths.
+- Apply Pi-originated reports to the correct Hue-visible parent or virtual
+  child identity.
 - Add reset/rejoin behavior that does not require manually changing IEEE
   addresses after each experiment.
 
