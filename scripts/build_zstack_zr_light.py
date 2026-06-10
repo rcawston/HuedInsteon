@@ -309,6 +309,7 @@ static void huedInsteon_SetVirtualEui(void)
                 "static void huedInsteonDiag_MacVirtualChildAssoc(uint8_t childIndex);\n"
                 "static void huedInsteonDiag_OverAirMacVirtualChildAssoc(uint8_t childIndex);\n"
                 "static void huedInsteonDiag_RestoreParentIdentity(void);\n"
+                "static void huedInsteonDiag_RestoreVirtualRuntime(void);\n"
                 "static void huedInsteonDiag_RequestVirtualChildTcLinkKey(uint8_t childIndex);\n"
                 "static void huedInsteonDiag_RequestVirtualChildTcLinkKeyWithDefault(uint8_t childIndex);\n"
                 "static void huedInsteonDiag_AdmitVirtualChild(uint8_t childIndex);\n"
@@ -326,6 +327,9 @@ static void huedInsteon_SetVirtualEui(void)
 #define HUEDINSTEON_DIAG_EVT 0x80000000UL
 #define HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT __HUEDINSTEON_VIRTUAL_CHILD_COUNT__
 #define HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT __HUEDINSTEON_VIRTUAL_CHILD_STORAGE_COUNT__
+#define HUEDINSTEON_DIAG_NV_ID 0x0F21
+#define HUEDINSTEON_DIAG_NV_MAGIC 0x48494431UL
+#define HUEDINSTEON_DIAG_NV_VERSION 1
 static UART2_Handle huedInsteonDiag_Uart;
 static char huedInsteonDiag_RxByte;
 static char huedInsteonDiag_Line[32];
@@ -361,6 +365,29 @@ static uint8_t huedInsteonDiag_VirtualChildLevel[HUEDINSTEON_DIAG_VIRTUAL_CHILD_
 static uint8_t huedInsteonDiag_ParentOn = LIGHT_OFF;
 static uint8_t huedInsteonDiag_ParentLevel = 254;
 static uint32_t huedInsteonDiag_SerialSeq;
+
+typedef struct
+{
+  uint8_t joined;
+  uint8_t on;
+  uint8_t level;
+  uint8_t nwkSeq;
+  uint8_t apsSeq;
+  uint8_t reserved0;
+  uint16_t shortAddr;
+  uint32_t nwkFrameCounter;
+} huedInsteonDiag_VirtualChildNv_t;
+
+typedef struct
+{
+  uint32_t magic;
+  uint8_t version;
+  uint8_t childCount;
+  uint8_t parentOn;
+  uint8_t parentLevel;
+  uint32_t serialSeq;
+  huedInsteonDiag_VirtualChildNv_t child[HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT];
+} huedInsteonDiag_NvState_t;
 
 extern void MAC_CbackEvent(macCbackEvent_t *pData);
 
@@ -426,6 +453,231 @@ static void huedInsteonDiag_CopyEuiString(char *out, size_t outLen, int8_t child
            (unsigned)src[0]);
 }
 
+static void huedInsteonDiag_SetupVirtualChildRuntime(uint8_t childIndex, bool secured)
+{
+  associated_devices_t *assoc;
+  AddrMgrEntry_t addr;
+  const uint8_t *eui;
+  uint16_t nwkAddr;
+
+  if (childIndex >= HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT)
+  {
+    return;
+  }
+
+  eui = huedInsteonDiag_VirtualChildEui[childIndex];
+  nwkAddr = huedInsteonDiag_VirtualChildLiveNwk[childIndex];
+  if (nwkAddr == INVALID_NODE_ADDR)
+  {
+    nwkAddr = huedInsteonDiag_VirtualChildNwk[childIndex];
+    huedInsteonDiag_VirtualChildLiveNwk[childIndex] = nwkAddr;
+  }
+
+  memset(&addr, 0, sizeof(addr));
+  addr.user = ADDRMGR_USER_DEFAULT;
+  addr.nwkAddr = nwkAddr;
+  AddrMgrExtAddrSet(addr.extAddr, (uint8_t *)eui);
+  AddrMgrEntryUpdate(&addr);
+
+  assoc = AssocAddNew(nwkAddr, (uint8_t *)eui, CHILD_RFD_RX_IDLE);
+  if (assoc != NULL)
+  {
+    if (secured)
+    {
+      assoc->devStatus |= DEV_SEC_AUTH_STATUS | DEV_SECURED_JOIN;
+    }
+    assoc->age = 0;
+    assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
+    assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
+    assoc->keepaliveRcv = true;
+    AssocWriteNV();
+  }
+}
+
+static void huedInsteonDiag_SaveNv(void)
+{
+  huedInsteonDiag_NvState_t state;
+  uint8_t i;
+  uint8_t initStatus;
+  uint8_t writeStatus;
+
+  memset(&state, 0, sizeof(state));
+  state.magic = HUEDINSTEON_DIAG_NV_MAGIC;
+  state.version = HUEDINSTEON_DIAG_NV_VERSION;
+  state.childCount = HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT;
+  state.parentOn = huedInsteonDiag_ParentOn;
+  state.parentLevel = huedInsteonDiag_ParentLevel;
+  state.serialSeq = huedInsteonDiag_SerialSeq;
+
+  for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT; i++)
+  {
+    state.child[i].joined = huedInsteonDiag_VirtualChildJoined[i] ? 1 : 0;
+    state.child[i].on = huedInsteonDiag_VirtualChildOn[i];
+    state.child[i].level = huedInsteonDiag_VirtualChildLevel[i];
+    state.child[i].nwkSeq = huedInsteonDiag_VirtualNwkSeq[i];
+    state.child[i].apsSeq = huedInsteonDiag_VirtualApsSeq[i];
+    state.child[i].shortAddr = huedInsteonDiag_VirtualChildLiveNwk[i];
+    state.child[i].nwkFrameCounter = huedInsteonDiag_VirtualNwkFrameCounter[i];
+  }
+
+  initStatus = osal_nv_item_init(HUEDINSTEON_DIAG_NV_ID, sizeof(state), &state);
+  writeStatus = osal_nv_write(HUEDINSTEON_DIAG_NV_ID, sizeof(state), &state);
+  huedInsteonDiag_Log("VSAVE init=%u write=%u children=%u serial=%lu",
+                      (unsigned)initStatus,
+                      (unsigned)writeStatus,
+                      (unsigned)HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT,
+                      (unsigned long)huedInsteonDiag_SerialSeq);
+}
+
+static bool huedInsteonDiag_LoadNv(bool logResult)
+{
+  huedInsteonDiag_NvState_t defaults;
+  huedInsteonDiag_NvState_t state;
+  uint8_t i;
+  uint8_t initStatus;
+  uint8_t readStatus;
+  bool valid;
+
+  memset(&defaults, 0, sizeof(defaults));
+  defaults.magic = HUEDINSTEON_DIAG_NV_MAGIC;
+  defaults.version = HUEDINSTEON_DIAG_NV_VERSION;
+  defaults.childCount = HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT;
+  defaults.parentOn = LIGHT_OFF;
+  defaults.parentLevel = 254;
+  defaults.serialSeq = 0;
+  for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT; i++)
+  {
+    defaults.child[i].joined = 0;
+    defaults.child[i].on = LIGHT_OFF;
+    defaults.child[i].level = 254;
+    defaults.child[i].nwkSeq = huedInsteonDiag_VirtualNwkSeq[i];
+    defaults.child[i].apsSeq = huedInsteonDiag_VirtualApsSeq[i];
+    defaults.child[i].shortAddr = huedInsteonDiag_VirtualChildNwk[i];
+    defaults.child[i].nwkFrameCounter = 1;
+  }
+
+  initStatus = osal_nv_item_init(HUEDINSTEON_DIAG_NV_ID, sizeof(defaults), &defaults);
+  memset(&state, 0, sizeof(state));
+  readStatus = osal_nv_read(HUEDINSTEON_DIAG_NV_ID, 0, sizeof(state), &state);
+  valid = (readStatus == ZSuccess) &&
+          (state.magic == HUEDINSTEON_DIAG_NV_MAGIC) &&
+          (state.version == HUEDINSTEON_DIAG_NV_VERSION);
+
+  if (valid)
+  {
+    huedInsteonDiag_ParentOn = state.parentOn;
+    huedInsteonDiag_ParentLevel = state.parentLevel;
+    huedInsteonDiag_SerialSeq = state.serialSeq;
+    for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT; i++)
+    {
+      huedInsteonDiag_VirtualChildJoined[i] = (i < state.childCount) && (state.child[i].joined != 0);
+      huedInsteonDiag_VirtualChildOn[i] = state.child[i].on;
+      huedInsteonDiag_VirtualChildLevel[i] = state.child[i].level;
+      huedInsteonDiag_VirtualNwkSeq[i] = state.child[i].nwkSeq;
+      huedInsteonDiag_VirtualApsSeq[i] = state.child[i].apsSeq;
+      huedInsteonDiag_VirtualChildLiveNwk[i] = state.child[i].shortAddr;
+      huedInsteonDiag_VirtualNwkFrameCounter[i] = state.child[i].nwkFrameCounter;
+      if (huedInsteonDiag_VirtualNwkFrameCounter[i] == 0)
+      {
+        huedInsteonDiag_VirtualNwkFrameCounter[i] = 1;
+      }
+    }
+  }
+
+  if (logResult)
+  {
+    huedInsteonDiag_Log("VLOAD init=%u read=%u valid=%u stored-children=%u active-children=%u serial=%lu",
+                        (unsigned)initStatus,
+                        (unsigned)readStatus,
+                        (unsigned)valid,
+                        (unsigned)(valid ? state.childCount : 0),
+                        (unsigned)HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT,
+                        (unsigned long)huedInsteonDiag_SerialSeq);
+  }
+
+  return valid;
+}
+
+static void huedInsteonDiag_RestoreVirtualRuntime(void)
+{
+  uint8_t i;
+  uint8_t restored = 0;
+
+  for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT; i++)
+  {
+    if (huedInsteonDiag_VirtualChildJoined[i])
+    {
+      huedInsteonDiag_SetupVirtualChildRuntime(i, true);
+      restored++;
+      huedInsteonDiag_Log("VRESTORE-CHILD idx=%u nwk=0x%04x seq=%u/%u fc=%lu on=%u level=%u",
+                          (unsigned)(i + 1),
+                          (unsigned)huedInsteonDiag_VirtualChildLiveNwk[i],
+                          (unsigned)huedInsteonDiag_VirtualNwkSeq[i],
+                          (unsigned)huedInsteonDiag_VirtualApsSeq[i],
+                          (unsigned long)huedInsteonDiag_VirtualNwkFrameCounter[i],
+                          (unsigned)huedInsteonDiag_VirtualChildOn[i],
+                          (unsigned)huedInsteonDiag_VirtualChildLevel[i]);
+    }
+  }
+
+  huedInsteonDiag_Log("VRESTORE-RUNTIME restored=%u children=%u",
+                      (unsigned)restored,
+                      (unsigned)HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT);
+}
+
+static void huedInsteonDiag_PrintVirtualState(void)
+{
+  uint8_t i;
+
+  huedInsteonDiag_Log("VSTATE parent-nwk=0x%04x parent-on=%u parent-level=%u serial=%lu children=%u",
+                      (unsigned)_NIB.nwkDevAddress,
+                      (unsigned)huedInsteonDiag_ParentOn,
+                      (unsigned)huedInsteonDiag_ParentLevel,
+                      (unsigned long)huedInsteonDiag_SerialSeq,
+                      (unsigned)HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT);
+  for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT; i++)
+  {
+    huedInsteonDiag_Log("VSTATE-CHILD idx=%u joined=%u nwk=0x%04x eui=%02x%02x%02x%02x%02x%02x%02x%02x seq=%u/%u fc=%lu on=%u level=%u",
+                        (unsigned)(i + 1),
+                        (unsigned)huedInsteonDiag_VirtualChildJoined[i],
+                        (unsigned)huedInsteonDiag_VirtualChildLiveNwk[i],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][7],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][6],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][5],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][4],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][3],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][2],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][1],
+                        (unsigned)huedInsteonDiag_VirtualChildEui[i][0],
+                        (unsigned)huedInsteonDiag_VirtualNwkSeq[i],
+                        (unsigned)huedInsteonDiag_VirtualApsSeq[i],
+                        (unsigned long)huedInsteonDiag_VirtualNwkFrameCounter[i],
+                        (unsigned)huedInsteonDiag_VirtualChildOn[i],
+                        (unsigned)huedInsteonDiag_VirtualChildLevel[i]);
+  }
+}
+
+static void huedInsteonDiag_ClearVirtualNv(void)
+{
+  uint8_t i;
+  uint8_t deleteStatus;
+
+  deleteStatus = osal_nv_delete(HUEDINSTEON_DIAG_NV_ID, sizeof(huedInsteonDiag_NvState_t));
+  huedInsteonDiag_ParentOn = LIGHT_OFF;
+  huedInsteonDiag_ParentLevel = 254;
+  huedInsteonDiag_SerialSeq = 0;
+  for (i = 0; i < HUEDINSTEON_DIAG_VIRTUAL_CHILD_STORAGE_COUNT; i++)
+  {
+    huedInsteonDiag_VirtualChildJoined[i] = false;
+    huedInsteonDiag_VirtualChildOn[i] = LIGHT_OFF;
+    huedInsteonDiag_VirtualChildLevel[i] = 254;
+    huedInsteonDiag_VirtualChildLiveNwk[i] = huedInsteonDiag_VirtualChildNwk[i];
+    huedInsteonDiag_VirtualNwkFrameCounter[i] = 1;
+  }
+  huedInsteonDiag_Log("VCLEAR delete=%u", (unsigned)deleteStatus);
+  huedInsteonDiag_SaveNv();
+}
+
 static void huedInsteonDiag_RecordVirtualCommand(int8_t childIndex, uint8_t on, uint8_t level)
 {
   if ((childIndex >= 0) && (childIndex < HUEDINSTEON_DIAG_VIRTUAL_CHILD_COUNT))
@@ -438,6 +690,7 @@ static void huedInsteonDiag_RecordVirtualCommand(int8_t childIndex, uint8_t on, 
     huedInsteonDiag_ParentOn = on;
     huedInsteonDiag_ParentLevel = level;
   }
+  huedInsteonDiag_SaveNv();
 }
 
 static void huedInsteonDiag_EmitCommand(const afIncomingMSGPacket_t *msg,
@@ -685,7 +938,9 @@ static void huedInsteonDiag_Init(void)
     UART2_rxEnable(huedInsteonDiag_Uart);
     huedInsteonDiag_ArmRead();
     huedInsteonDiag_Log("BOOT variant=diag");
-    huedInsteonDiag_Log("READY commands=commission,state,reset,vchild1,vchild2,vchild3,vchildren,vjoin1,vjoin2,vjoin3,vjoins,vnlme1,vnlme2,vnlme3,vnlmes,vsec1,vsec2,vsec3,vsecs,vassoc1,vassoc2,vassoc3,vassocs,vmacassoc1,vmacassoc2,vmacassoc3,vmacassocs,vrestore,vreqkey1,vreqkey2,vreqkey3,vreqkeys,vreqdef1,vreqdef2,vreqdef3,vreqdefs,vadmit1,vadmit2,vadmit3,vadmits,vparent1,vparent2,vparent3,vparents,help");
+    huedInsteonDiag_LoadNv(true);
+    huedInsteonDiag_RestoreVirtualRuntime();
+    huedInsteonDiag_Log("READY commands=commission,state,reset,vstate,vsave,vload,vclear,vchild1,vchild2,vchild3,vchildren,vjoin1,vjoin2,vjoin3,vjoins,vnlme1,vnlme2,vnlme3,vnlmes,vsec1,vsec2,vsec3,vsecs,vassoc1,vassoc2,vassoc3,vassocs,vmacassoc1,vmacassoc2,vmacassoc3,vmacassocs,vrestore,vreqkey1,vreqkey2,vreqkey3,vreqkeys,vreqdef1,vreqdef2,vreqdef3,vreqdefs,vadmit1,vadmit2,vadmit3,vadmits,vparent1,vparent2,vparent3,vparents,help");
   }
 }
 
@@ -786,6 +1041,8 @@ void huedInsteonDiag_MacTrace(uint8_t event, uint8_t status, uint16_t shortAddr)
       {
         huedInsteonDiag_VirtualChildLiveNwk[childIndex] = shortAddr;
         huedInsteonDiag_VirtualChildJoined[childIndex] = true;
+        huedInsteonDiag_SetupVirtualChildRuntime((uint8_t)childIndex, false);
+        huedInsteonDiag_SaveNv();
         break;
       }
     }
@@ -828,9 +1085,13 @@ static void huedInsteonDiag_AnnounceVirtualChild(uint8_t childIndex)
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
+    huedInsteonDiag_VirtualChildLiveNwk[childIndex] = assoc->shortAddr;
+    huedInsteonDiag_VirtualChildJoined[childIndex] = true;
+    AssocWriteNV();
   }
 
   status = huedInsteonDiag_AliasDeviceAnnce(nwkAddr, nwkAddr, eui);
+  huedInsteonDiag_SaveNv();
 
   huedInsteonDiag_Log("VCHILD-ALIAS idx=%u nwk=0x%04x eui=%02x%02x%02x%02x%02x%02x%02x%02x assoc=%u annce=%u restored=0x%04x",
                       (unsigned)(childIndex + 1),
@@ -882,6 +1143,9 @@ static void huedInsteonDiag_ForwardVirtualChildJoin(uint8_t childIndex)
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
+    huedInsteonDiag_VirtualChildLiveNwk[childIndex] = assoc->shortAddr;
+    huedInsteonDiag_VirtualChildJoined[childIndex] = true;
+    AssocWriteNV();
   }
 
   memset(&req, 0, sizeof(req));
@@ -897,6 +1161,7 @@ static void huedInsteonDiag_ForwardVirtualChildJoin(uint8_t childIndex)
   secureStatus = APSME_UpdateDeviceReq(&req);
 
   annceStatus = huedInsteonDiag_AliasDeviceAnnce(nwkAddr, nwkAddr, eui);
+  huedInsteonDiag_SaveNv();
 
   huedInsteonDiag_Log("VJOIN idx=%u nwk=0x%04x eui=%02x%02x%02x%02x%02x%02x%02x%02x assoc=%u update-plain=%u update-secure=%u annce=%u restored=0x%04x",
                       (unsigned)(childIndex + 1),
@@ -949,12 +1214,16 @@ static void huedInsteonDiag_NlmeVirtualChildJoin(uint8_t childIndex)
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
+    huedInsteonDiag_VirtualChildLiveNwk[childIndex] = assoc->shortAddr;
+    huedInsteonDiag_VirtualChildJoined[childIndex] = true;
+    AssocWriteNV();
   }
 
   joinStatus = NLME_JoinIndication(nwkAddr, (uint8_t *)eui,
                                    CAPINFO_POWER_AC | CAPINFO_RCVR_ON_IDLE | CAPINFO_SECURITY_CAPABLE,
                                    NWK_ASSOC_JOIN);
   annceStatus = huedInsteonDiag_AliasDeviceAnnce(nwkAddr, nwkAddr, eui);
+  huedInsteonDiag_SaveNv();
 
   huedInsteonDiag_Log("VNLME idx=%u nwk=0x%04x eui=%02x%02x%02x%02x%02x%02x%02x%02x assoc=%u join-ind=%u annce=%u restored=0x%04x",
                       (unsigned)(childIndex + 1),
@@ -1007,6 +1276,9 @@ static void huedInsteonDiag_SecMgrVirtualChildJoin(uint8_t childIndex)
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
+    huedInsteonDiag_VirtualChildLiveNwk[childIndex] = assoc->shortAddr;
+    huedInsteonDiag_VirtualChildJoined[childIndex] = true;
+    AssocWriteNV();
   }
 
   joinStatus = NLME_JoinIndication(nwkAddr, (uint8_t *)eui,
@@ -1014,6 +1286,7 @@ static void huedInsteonDiag_SecMgrVirtualChildJoin(uint8_t childIndex)
                                    NWK_ASSOC_JOIN);
   secStatus = ZDSecMgrNewDeviceEvent(nwkAddr);
   annceStatus = huedInsteonDiag_AliasDeviceAnnce(nwkAddr, nwkAddr, eui);
+  huedInsteonDiag_SaveNv();
 
   huedInsteonDiag_Log("VSEC idx=%u nwk=0x%04x eui=%02x%02x%02x%02x%02x%02x%02x%02x assoc=%u join-ind=%u sec-new=%u annce=%u restored=0x%04x",
                       (unsigned)(childIndex + 1),
@@ -1070,6 +1343,8 @@ static void huedInsteonDiag_MacVirtualChildAssoc(uint8_t childIndex)
     assoc->keepaliveRcv = true;
     secStatus = ZDSecMgrNewDeviceEvent(assoc->shortAddr);
     annceStatus = huedInsteonDiag_AliasDeviceAnnce(assoc->shortAddr, assoc->shortAddr, eui);
+    AssocWriteNV();
+    huedInsteonDiag_SaveNv();
   }
 
   huedInsteonDiag_Log("VASSOC idx=%u eui=%02x%02x%02x%02x%02x%02x%02x%02x queued=1 assoc-now=%u short=0x%04x rel=%u dev=0x%02x sec-new=%u annce=%u",
@@ -1220,6 +1495,7 @@ static void huedInsteonDiag_RequestVirtualChildTcLinkKey(uint8_t childIndex)
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
+    AssocWriteNV();
   }
 
   savedNwkAddr = _NIB.nwkDevAddress;
@@ -1240,6 +1516,7 @@ static void huedInsteonDiag_RequestVirtualChildTcLinkKey(uint8_t childIndex)
   req.partExtAddr = NULL;
   status = APSME_RequestKeyReq(&req);
   huedInsteonDiag_VirtualNwkFrameCounter[childIndex] = nwkFrameCounter;
+  huedInsteonDiag_SaveNv();
 
   ZMacSetReq(ZMacExtAddr, savedEui);
   nwkFrameCounter = savedNwkFrameCounter;
@@ -1305,11 +1582,13 @@ static void huedInsteonDiag_AdmitVirtualChild(uint8_t childIndex)
   if (assoc != NULL)
   {
     huedInsteonDiag_VirtualChildLiveNwk[childIndex] = assoc->shortAddr;
+    huedInsteonDiag_VirtualChildJoined[childIndex] = true;
     assoc->age = 0;
     assoc->endDev.deviceTimeout = TIMEOUT_DONT_AGE_OUT;
     assoc->timeoutCounter = TIMEOUT_DONT_AGE_OUT;
     assoc->keepaliveRcv = true;
     secStatus = ZDSecMgrNewDeviceEvent(assoc->shortAddr);
+    AssocWriteNV();
   }
   huedInsteonDiag_RequestVirtualChildTcLinkKey(childIndex);
   assoc = AssocGetWithExt((uint8_t *)eui);
@@ -1317,6 +1596,7 @@ static void huedInsteonDiag_AdmitVirtualChild(uint8_t childIndex)
   {
     annceStatus = huedInsteonDiag_AliasDeviceAnnce(assoc->shortAddr, assoc->shortAddr, eui);
   }
+  huedInsteonDiag_SaveNv();
 
   huedInsteonDiag_Log("VADMIT idx=%u assoc=%u short=0x%04x sec-new=%u annce=%u",
                       (unsigned)(childIndex + 1),
@@ -1385,6 +1665,23 @@ static void huedInsteonDiag_Process(void)
   {
     huedInsteonDiag_Log("CMD reset-local");
     Zstackapi_bdbResetLocalActionReq(appServiceTaskId);
+  }
+  else if (strcmp(command, "vstate") == 0)
+  {
+    huedInsteonDiag_PrintVirtualState();
+  }
+  else if (strcmp(command, "vsave") == 0)
+  {
+    huedInsteonDiag_SaveNv();
+  }
+  else if (strcmp(command, "vload") == 0)
+  {
+    huedInsteonDiag_LoadNv(true);
+    huedInsteonDiag_RestoreVirtualRuntime();
+  }
+  else if (strcmp(command, "vclear") == 0)
+  {
+    huedInsteonDiag_ClearVirtualNv();
   }
   else if (strcmp(command, "vchildren") == 0)
   {
@@ -1607,6 +1904,7 @@ static void huedInsteonDiag_Process(void)
   else if (strcmp(command, "vrestore") == 0)
   {
     huedInsteonDiag_RestoreParentIdentity();
+    huedInsteonDiag_RestoreVirtualRuntime();
   }
   else if (strcmp(command, "vreqkey1") == 0)
   {
@@ -1682,7 +1980,7 @@ static void huedInsteonDiag_Process(void)
   }
   else if (strcmp(command, "help") == 0)
   {
-    huedInsteonDiag_Log("HELP commission|c state|s reset vchild1 vchild2 vchild3 vchildren vjoin1 vjoin2 vjoin3 vjoins vnlme1 vnlme2 vnlme3 vnlmes vsec1 vsec2 vsec3 vsecs vassoc1 vassoc2 vassoc3 vassocs vmacassoc1 vmacassoc2 vmacassoc3 vmacassocs vrestore vreqkey1 vreqkey2 vreqkey3 vreqkeys vreqdef1 vreqdef2 vreqdef3 vreqdefs vadmit1 vadmit2 vadmit3 vadmits vparent1 vparent2 vparent3 vparents help");
+    huedInsteonDiag_Log("HELP commission|c state|s reset vstate vsave vload vclear vchild1 vchild2 vchild3 vchildren vjoin1 vjoin2 vjoin3 vjoins vnlme1 vnlme2 vnlme3 vnlmes vsec1 vsec2 vsec3 vsecs vassoc1 vassoc2 vassoc3 vassocs vmacassoc1 vmacassoc2 vmacassoc3 vmacassocs vrestore vreqkey1 vreqkey2 vreqkey3 vreqkeys vreqdef1 vreqdef2 vreqdef3 vreqdefs vadmit1 vadmit2 vadmit3 vadmits vparent1 vparent2 vparent3 vparents help");
   }
   else
   {
@@ -1702,7 +2000,7 @@ static void huedInsteonDiag_Process(void)
         text = replace_once(
             text,
             "        case zstackmsg_CmdIDs_DEV_STATE_CHANGE_IND:\n        {\n#if !defined(CUI_DISABLE) || defined(USE_DMM) && defined(BLE_START)\n",
-            "        case zstackmsg_CmdIDs_DEV_STATE_CHANGE_IND:\n        {\n#ifdef HUEDINSTEON_DIAG\n            zstackmsg_devStateChangeInd_t *diagStateInd = (zstackmsg_devStateChangeInd_t *)pMsg;\n            huedInsteonDiag_Log(\"DEV state=%u\", (unsigned)diagStateInd->req.state);\n            huedInsteonDiag_LogState(\"dev-state\");\n#endif\n#if !defined(CUI_DISABLE) || defined(USE_DMM) && defined(BLE_START)\n",
+            "        case zstackmsg_CmdIDs_DEV_STATE_CHANGE_IND:\n        {\n#ifdef HUEDINSTEON_DIAG\n            zstackmsg_devStateChangeInd_t *diagStateInd = (zstackmsg_devStateChangeInd_t *)pMsg;\n            huedInsteonDiag_Log(\"DEV state=%u\", (unsigned)diagStateInd->req.state);\n            huedInsteonDiag_LogState(\"dev-state\");\n            if ((diagStateInd->req.state == zstack_DevState_DEV_ZB_COORD) ||\n                (diagStateInd->req.state == zstack_DevState_DEV_ROUTER) ||\n                (diagStateInd->req.state == zstack_DevState_DEV_END_DEVICE))\n            {\n              huedInsteonDiag_RestoreVirtualRuntime();\n            }\n#endif\n#if !defined(CUI_DISABLE) || defined(USE_DMM) && defined(BLE_START)\n",
         )
         text = replace_once(
             text,

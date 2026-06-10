@@ -17,10 +17,11 @@ The current one-dongle direction is parent plus virtual children:
 - The firmware maps parent/child identity back to logical endpoint numbers for
   the Pi: parent = `1`, first child = `2`, second child = `3`.
 
-The diagnostic firmware has proven admission and discovery. Production firmware
-also tracks live child short addresses, serves virtual-child descriptors, and
-emits identity-aware Hue command JSON to the Pi. The remaining firmware work is
-durability and reverse-direction reporting, not basic multi-identity discovery.
+The firmware has proven admission and discovery, tracks live child short
+addresses, serves virtual-child descriptors, and emits identity-aware Hue command
+JSON to the Pi. It also persists the virtual identity table and restores it
+after reboot or network restoration by rebuilding Z-Stack address-manager and
+association-table entries.
 
 ## Build
 
@@ -85,6 +86,15 @@ Associate two virtual children:
 Then use the Hue app to change each light and listen for JSON command lines on
 the serial port.
 
+Inspect or reset the persisted virtual identity table:
+
+```bash
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vstate --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vsave --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vload --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vclear --watch 5
+```
+
 ## Serial Protocol
 
 Firmware to Pi:
@@ -103,14 +113,12 @@ Pi to firmware:
 
 ## Remaining Firmware Work
 
-- Persist and restore per-identity short address, trust-center/security state,
-  frame counters, and ZCL attributes across reboot/rejoin.
-- Remove remaining diagnostic global-state swaps from identity-sensitive send
-  paths.
 - Apply Pi-originated reports to the correct Hue-visible parent or virtual
   child identity.
-- Add reset/rejoin behavior that does not require manually changing IEEE
-  addresses after each experiment.
+- Validate reboot/rejoin behavior against the Hue Bridge Pro with already-added
+  parent and virtual-child lights.
+- Promote the validated diagnostic command set into a smaller production serial
+  protocol once Pi-originated reports are implemented.
 
 ## License Boundary
 

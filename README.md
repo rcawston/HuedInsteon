@@ -27,10 +27,13 @@ What is already proven:
 - Lower-level MAC association from virtual child IEEE identities works. Hue
   created separate connected light resources for a parent light plus virtual
   child lights from one physical dongle.
-- The diagnostic firmware now tracks live virtual-child short addresses, serves
-  virtual-child descriptors, demultiplexes Hue ZCL commands by parent/child
-  identity, and emits JSON command events to the Pi with `endpoint`, `identity`,
-  `ieee`, and `nwk` metadata.
+- The firmware now tracks and persists live virtual-child short addresses,
+  per-identity frame counters, ZCL on/level state, and serial sequence state.
+  On boot or network restoration it reloads that record and rebuilds the
+  Z-Stack address manager and association table for virtual children.
+- The firmware serves virtual-child descriptors, demultiplexes Hue ZCL commands
+  by parent/child identity, and emits JSON command events to the Pi with
+  `endpoint`, `identity`, `ieee`, and `nwk` metadata.
 - Firmware builds now support `--virtual-child-count N` for `N` from `0` to
   `15`. `0` means parent-only. For the intended three total Hue lights, use
   `--virtual-child-count 2` so the parent is light 1 and the two virtual
@@ -38,10 +41,6 @@ What is already proven:
 
 What is not done yet:
 
-- Production hardening for multi-identity firmware: persist and restore
-  per-light short addresses, trust-center/security material, frame counters,
-  and ZCL state across reboot/rejoin instead of relying on diagnostic in-memory
-  state and fresh IEEE test identities.
 - Pi-to-Zigbee report routing for each Hue-visible identity, so physical
   Insteon changes can update the correct parent or virtual-child light in Hue.
 - Real Insteon PLM integration through `pyinsteon`, including event handling,
@@ -124,6 +123,15 @@ python3 scripts/build_zstack_zr_light.py \
 
 Use a fresh `--virtual-eui` when testing with Hue if the bridge appears to have
 cached old trust-center or device state for a prior identity.
+
+Useful firmware serial commands while validating the identity table:
+
+```bash
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vstate --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vsave --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vload --watch 5
+.venv/bin/python scripts/zigbee_diag.py /dev/cu.usbserial-1130 vclear --watch 5
+```
 
 ## Flash Sonoff ZBDongle-P
 
