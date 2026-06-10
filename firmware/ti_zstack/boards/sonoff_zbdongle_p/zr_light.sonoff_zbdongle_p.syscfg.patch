@@ -1,0 +1,71 @@
+--- zr_light.syscfg
++++ zr_light.syscfg
+@@
+-// @cliArgs --board /ti/boards/CC1352P_2_LAUNCHXL --rtos tirtos7
++// @cliArgs --board /ti/boards/SONOFF_ZBDONGLE_P --rtos tirtos7
+@@
+-var Button1  = Button.addInstance();
+-var Button2  = Button.addInstance();
+-var LED1     = LED.addInstance();
+-var LED2     = LED.addInstance();
++var Button1  = Button.addInstance();
++var LED1     = LED.addInstance();
+ var NVS1     = NVS.addInstance();
+-var NVS2     = NVS.addInstance();
+@@
+-/* Red LED */
+-LED1.$name                                      = "CONFIG_LED_RED";
+-LED1.$hardware                                  = system.deviceData.board.components.LED_RED;
++/* Optional green LED. Some ZBDongle-P revisions do not populate this LED. */
++LED1.$name                                      = "CONFIG_LED_RED";
++LED1.$hardware                                  = system.deviceData.board.components.LED_GREEN;
+ LED1.dimmable                                   = true;
+ LED1.pwmPin.$name                               = "CONFIG_PWM_RED";
+ LED1.pwmPin.timerObject.$name                   = "CONFIG_GPTIMER_0";
+ LED1.pwmPin.timerObject.timer.$name             = "MyGPTM1";
+ LED1.pwmPin.timerObject.pwmPinInstance.$name    = "CONFIG_PIN_RLED";
+-
+-/* Green LED */
+-LED2.$name                      = "CONFIG_LED_GREEN";
+-LED2.$hardware                  = system.deviceData.board.components.LED_GREEN;
+-LED2.gpioPin.$name              = "CONFIG_GPIO_GLED";
+-LED2.gpioPin.mode               = "Output";
+@@
+-/* Left Button */
++/* Boot / BSL Button */
+ Button1.$name                       = "CONFIG_BTN_LEFT";
+ Button1.$hardware                   = system.deviceData.board.components["BTN-1"];
+ Button1.gpioPin.$name               = "CONFIG_GPIO_BTN1";
+ Button1.gpioPin.pull                = "Pull Up";
+-
+-/* Left Button */
+-Button2.$name                       = "CONFIG_BTN_RIGHT";
+-Button2.$hardware                   = system.deviceData.board.components["BTN-2"];
+-Button2.gpioPin.$name               = "CONFIG_GPIO_BTN2";
+-Button2.gpioPin.pull                = "Pull Up";
+@@
+-/* External NVS */
+-NVS2.$name                          = "CONFIG_NVSEXTERNAL";
+-NVS2.nvsType                        = "External";
+-NVS2.$hardware                      = system.deviceData.board.components.MX25R8035F;
+-NVS2.externalFlash.regionBase       = 0;
+-NVS2.externalFlash.regionSize       = 0x256000;
+-NVS2.externalFlash.sectorSize       = 0x1000;
+-NVS2.externalFlash.verifyBufferSize = 64;
+-
+-
+-/* External NVS SPI instance */
+-var NVSSPI25XDevice1 = NVS2.externalFlash.spiFlashDevice;
+-var SPI1                   = NVSSPI25XDevice1.sharedSpiInstance;
+-SPI1.$name                 = "CONFIG_SPI_0";
+-SPI1.sclkPinInstance.$name = "CONFIG_PIN_SPI_SCLK";
+-SPI1.misoPinInstance.$name = "CONFIG_PIN_SPI_MISO";
+-SPI1.mosiPinInstance.$name = "CONFIG_PIN_SPI_MOSI";
+@@
+-if (system.deviceData.board && system.deviceData.board.components.XDS110UART) {
+-    Display_UART.$hardware = system.deviceData.board.components.XDS110UART;
+-}
++Display_UART.$hardware = system.deviceData.board.components.CP2102N_UART;
+ Display_UART.$name = "CONFIG_DISPLAY";                         // Descriptive name for Display
+ Display_UART.uart.$name = "CONFIG_DISPLAY_UART";               // Descriptive name for Display_UART
+

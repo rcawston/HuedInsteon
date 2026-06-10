@@ -1,0 +1,15 @@
+HuedInsteon
+Copyright 2026 Ross
+
+HuedInsteon project-owned source code, configuration, scripts, and
+documentation are licensed under the Apache License, Version 2.0.
+
+This repository does not include the Texas Instruments SimpleLink SDK,
+Z-Stack source tree, TI compiler, SysConfig, or Code Composer Studio project
+artifacts. Those components must be obtained separately from Texas Instruments
+and remain subject to Texas Instruments license terms, including any device-use
+restrictions in the TI SDK license.
+
+Philips Hue, Insteon, Sonoff, Texas Instruments, Zigbee, and other product or
+company names are trademarks of their respective owners. This project is not
+affiliated with or endorsed by those owners.

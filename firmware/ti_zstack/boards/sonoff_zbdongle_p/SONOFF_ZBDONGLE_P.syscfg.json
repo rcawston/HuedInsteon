@@ -1,0 +1,135 @@
+{
+  "name": "SONOFF_ZBDONGLE_P",
+  "displayName": "SONOFF Zigbee 3.0 USB Dongle Plus (ZBDongle-P)",
+  "device": "CC1352P1F3RGZ",
+  "part": "Default",
+  "package": "RGZ",
+  "headers": [
+    {
+      "type": "Module pins",
+      "default": true,
+      "name": "module",
+      "displayName": "SONOFF ZBDongle-P CC2652P Pins",
+      "pins": [
+        {
+          "number": 7,
+          "ball": "12",
+          "name": "DIO7"
+        },
+        {
+          "number": 12,
+          "ball": "18",
+          "name": "DIO12",
+          "preferredType": [
+            "UART_RXD"
+          ]
+        },
+        {
+          "number": 13,
+          "ball": "19",
+          "name": "DIO13",
+          "preferredType": [
+            "UART_TXD"
+          ]
+        },
+        {
+          "number": 15,
+          "ball": "21",
+          "name": "DIO15"
+        },
+        {
+          "number": 18,
+          "ball": "28",
+          "name": "DIO18",
+          "preferredType": [
+            "UART_RTSN"
+          ]
+        },
+        {
+          "number": 19,
+          "ball": "29",
+          "name": "DIO19",
+          "preferredType": [
+            "UART_CTSN"
+          ]
+        },
+        {
+          "number": 28,
+          "ball": "41",
+          "name": "DIO28"
+        },
+        {
+          "number": 29,
+          "ball": "42",
+          "name": "DIO29"
+        }
+      ]
+    }
+  ],
+  "components": {
+    "CP2102N_UART": {
+      "displayName": "CP2102N USB UART",
+      "definition": "/ti/boards/components/xds110Uart.json",
+      "connections": {
+        "RXD": "12",
+        "TXD": "13"
+      }
+    },
+    "XDS110UART": {
+      "link": "CP2102N_UART"
+    },
+    "BOOT": {
+      "displayName": "Boot / BSL Button",
+      "definition": "/ti/boards/components/button.json",
+      "settings": {
+        "DIN": {
+          "pull": "Internal",
+          "polarity": "Active Low"
+        }
+      },
+      "connections": {
+        "INPUT": "15"
+      }
+    },
+    "BTN-1": {
+      "link": "BOOT"
+    },
+    "BUTTON0": {
+      "link": "BOOT"
+    },
+    "LED_GREEN_OPTIONAL": {
+      "displayName": "Optional Green LED",
+      "definition": "/ti/boards/components/led_dimmable.json",
+      "connections": {
+        "OUTPUT": "7"
+      }
+    },
+    "LED_GREEN": {
+      "link": "LED_GREEN_OPTIONAL"
+    },
+    "LED": {
+      "link": "LED_GREEN_OPTIONAL"
+    },
+    "LED0": {
+      "link": "LED_GREEN_OPTIONAL"
+    },
+    "CC2652P_PA": {
+      "type": "RF",
+      "displayName": "CC2652P High Power PA",
+      "description": "SONOFF ZBDongle-P CC2652P RF control pins",
+      "signals": {
+        "24GHZ": {
+          "type": "RF_24GHZ",
+          "connection": 28
+        },
+        "HIGH_PA": {
+          "type": "RF_HIGH_PA",
+          "connection": 29
+        }
+      }
+    },
+    "RF": {
+      "link": "CC2652P_PA"
+    }
+  }
+}
